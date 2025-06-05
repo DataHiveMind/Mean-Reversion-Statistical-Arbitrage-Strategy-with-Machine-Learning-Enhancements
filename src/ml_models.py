@@ -5,7 +5,7 @@ import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, TimeSeriesSplit
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_squared_error
 
 try:
@@ -134,3 +134,41 @@ class MLModels:
             elif metric == 'rmse':
                 results['rmse'] = np.sqrt(mean_squared_error(y_true, y_pred))
         return results
+
+    def walk_forward_cv(self, X, y, model_type="random_forest", params=None, n_splits=5):
+        """
+        Walk-forward cross-validation for time-series.
+        """
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        scores = []
+        for train_idx, test_idx in tscv.split(X):
+            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+            self.train(X_train, y_train, model_type=model_type, params=params)
+            score = self.evaluate(X_test, y_test)
+            scores.append(score)
+        return scores
+
+    def bayesian_optimization(self, X, y, model_type="random_forest", n_trials=20):
+        import optuna
+        def objective(trial):
+            params = {
+                "n_estimators": trial.suggest_int("n_estimators", 50, 300),
+                "max_depth": trial.suggest_int("max_depth", 3, 12),
+                "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
+            }
+            self.train(X, y, model_type=model_type, params=params)
+            score = self.evaluate(X, y, metrics=["accuracy"])["accuracy"]
+            return score
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=n_trials)
+        return study.best_params
+
+    def explain_with_shap(self, X):
+        import shap
+        if hasattr(self.model, "predict_proba"):
+            explainer = shap.Explainer(self.model, X)
+            shap_values = explainer(X)
+            shap.summary_plot(shap_values, X)
+        else:
+            print("SHAP not supported for this model.")

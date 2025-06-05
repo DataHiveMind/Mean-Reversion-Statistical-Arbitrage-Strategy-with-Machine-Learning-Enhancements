@@ -81,3 +81,86 @@ class PairSelector:
             hedge_ratios.append(state_mean[0, 0])
 
         return pd.Series(hedge_ratios, index=y.index)
+
+    def screen_universe(self, min_volume=1e6, min_volatility=0.01, sector_map=None):
+        """
+        Screen assets by average volume, volatility, and optionally sector.
+        sector_map: dict {ticker: sector}
+        Returns: list of tickers passing filters
+        """
+        avg_vol = self.price_data.pct_change().std()
+        avg_volume = self.price_data.mean()
+        tickers = [t for t in self.price_data.columns
+                   if avg_vol[t] > min_volatility and avg_volume[t] > min_volume]
+        if sector_map:
+            # Example: filter by sector
+            tickers = [t for t in tickers if sector_map.get(t, None) == "Technology"]
+        return tickers
+
+    def factor_neutral_spread(self, y, x, factors_df):
+        """
+        Regress y and x on factors, use residuals for cointegration.
+        """
+        from statsmodels.api import OLS, add_constant
+        y_resid = OLS(y, add_constant(factors_df)).fit().resid
+        x_resid = OLS(x, add_constant(factors_df)).fit().resid
+        return y_resid, x_resid
+
+    def adf_test(self, series):
+        from statsmodels.tsa.stattools import adfuller
+        result = adfuller(series)
+        return result[1]  # p-value
+
+    def pp_test(self, series):
+        from statsmodels.tsa.stattools import PhillipsPerron
+        result = PhillipsPerron(series).stat
+        return result
+
+    def kpss_test(self, series):
+        from statsmodels.tsa.stattools import kpss
+        result = kpss(series, regression='c')
+        return result[1]  # p-value
+
+    def johansen_test(self, df, det_order=0, k_ar_diff=1):
+        from statsmodels.tsa.vector_ar.vecm import coint_johansen
+        result = coint_johansen(df, det_order, k_ar_diff)
+        return result.lr1, result.cvt  # eigenvalues, critical values
+
+    def zivot_andrews_test(self, series):
+        from statsmodels.tsa.stattools import zivot_andrews
+        result = zivot_andrews(series)
+        return result[1]  # p-value
+    
+    def rls_hedge_ratio(self, y, x, lambda_=0.99):
+        """
+        Recursive Least Squares for dynamic hedge ratio.
+        """
+        n = len(y)
+        beta = np.zeros(n)
+        P = 1e5
+        theta = 0
+        for t in range(n):
+            x_t = x.iloc[t]
+            y_t = y.iloc[t]
+            K = P * x_t / (lambda_ + x_t * P * x_t)
+            theta = theta + K * (y_t - x_t * theta)
+            P = (P - K * x_t * P) / lambda_
+            beta[t] = theta
+        return pd.Series(beta, index=y.index)
+
+    def cluster_assets(self, n_clusters=10, feature_df=None):
+        """
+        Cluster assets using KMeans on feature_df (e.g., vol, corr, etc.)
+        """
+        from sklearn.cluster import KMeans
+        if feature_df is None:
+            feature_df = self.price_data.pct_change().std().to_frame('vol')
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        labels = kmeans.fit_predict(feature_df)
+        return dict(zip(feature_df.index, labels))
+
+    def factor_exposure(self, tickers, factor_loadings):
+        """
+        Return factor exposures for given tickers.
+        """
+        return factor_loadings.loc[tickers]

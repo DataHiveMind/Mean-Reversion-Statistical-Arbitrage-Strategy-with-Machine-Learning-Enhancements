@@ -8,3 +8,17 @@ seaborn
 joblib
 xgboost
 lightgbm
+pytest
+plotly
+exchange_calendars
+scipy
+hmmlearn
+pydantic
+catboost
+optuna
+mlfinlab
+arch
+shap
+lime
+pykalman
+tqdm
